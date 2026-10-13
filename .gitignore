@@ -1,0 +1,8 @@
+original/
+captures/
+*.gpr
+*.rep/
+.DS_Store
+# Decompiled Acer code: copyrighted, never publish
+analysis/AcerDisplayWidget-src/
+analysis/*.decomp.c
