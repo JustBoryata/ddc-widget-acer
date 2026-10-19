@@ -64,14 +64,29 @@ public final class MonitorController: @unchecked Sendable {
             switch feature.access {
             case let .vcp(code):
                 var lastError: Error = DDCError.badReply("no attempts")
-                for _ in 0..<3 {
+                for attempt in 0..<3 {
+                    // A failed I2C write usually means the bus is busy (another app, or the monitor
+                    // still switching); retrying at once fails the same way.
+                    if attempt > 0 { Thread.sleep(forTimeInterval: Double(attempt)) }
                     do {
                         try display.set(code, to: value)
-                        if try Self.lowByteIfOutOfRange(display.get(code)).current == value { return }
-                        lastError = DDCError.badReply("\(feature.name): write of \(value) didn't stick")
                     } catch {
                         lastError = error
+                        continue
                     }
+                    // A display-mode change keeps the monitor busy for longer than settleDelay. Poll the
+                    // read-back rather than resending the write while the first one is still applying.
+                    let deadline = Date().addingTimeInterval(Self.verifyTimeout)
+                    repeat {
+                        do {
+                            let current = try Self.lowByteIfOutOfRange(display.get(code)).current
+                            if current == value { return }
+                            lastError = DDCError.badReply("\(feature.name): wrote \(value), monitor reports \(current)")
+                        } catch {
+                            lastError = error
+                        }
+                        Thread.sleep(forTimeInterval: 0.25)
+                    } while Date() < deadline
                 }
                 throw lastError
             case let .indexed(selector, index):
@@ -79,6 +94,9 @@ public final class MonitorController: @unchecked Sendable {
             }
         }
     }
+
+    /// How long a write's read-back may take to show the new value.
+    static let verifyTimeout: TimeInterval = 3
 
     /// XV275U P3 firmware sometimes puts the VCP code in the high byte (0xE2 reads 0xE200 for
     /// mode 0). A value above the reported maximum is never valid; keep the low byte.

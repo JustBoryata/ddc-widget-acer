@@ -5,6 +5,7 @@ import SwiftUI
 @main
 struct DDCWidgetApp: App {
     @StateObject private var model = MonitorModel()
+    @StateObject private var updater = Updater()
 
     init() {
         // Menu-bar only, no Dock icon (also set via LSUIElement in the bundle).
@@ -18,13 +19,20 @@ struct DDCWidgetApp: App {
         }
     }
 
+    private var updateAvailable: Bool {
+        if case .available = updater.state { return true }
+        return false
+    }
+
     var body: some Scene {
         MenuBarExtra {
             ContentView()
                 .environmentObject(model)
+                .environmentObject(updater)
                 .task { await model.connectIfNeeded() }
         } label: {
-            Image(systemName: "display")
+            Image(systemName: updateAvailable ? "display.and.arrow.down" : "display")
+                .onAppear { updater.start() }
         }
         .menuBarExtraStyle(.window)
     }
@@ -32,10 +40,12 @@ struct DDCWidgetApp: App {
 
 struct ContentView: View {
     @EnvironmentObject private var model: MonitorModel
+    @EnvironmentObject private var updater: Updater
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            if updater.state != .idle { UpdateRow() }
             switch model.state {
             case .connecting:
                 ProgressView("Connecting to monitor…").frame(maxWidth: .infinity)
@@ -62,6 +72,11 @@ struct ContentView: View {
             }
             Divider()
             HStack {
+                Text("v\(updater.currentVersion)").font(.caption).foregroundStyle(.secondary)
+                Button("Check for Updates") { Task { await updater.check(force: true) } }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .disabled(updater.state == .updating)
                 Spacer()
                 Button("Quit") { NSApplication.shared.terminate(nil) }
                     .keyboardShortcut("q")
@@ -69,7 +84,10 @@ struct ContentView: View {
         }
         .padding(14)
         .frame(width: 320, alignment: .topLeading)
-        .onAppear { Task { await model.refresh() } }
+        .onAppear {
+            Task { await model.refresh() }
+            Task { await updater.check() }
+        }
     }
 
     private var header: some View {
@@ -198,6 +216,47 @@ struct HDRRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .font(.caption)
+            }
+            .padding(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct UpdateRow: View {
+    @EnvironmentObject private var updater: Updater
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                switch updater.state {
+                case .idle:
+                    EmptyView()
+                case let .available(version):
+                    HStack {
+                        Image(systemName: "arrow.down.circle.fill").foregroundStyle(.tint)
+                        Text("Version \(version) is available").font(.headline)
+                        Spacer()
+                    }
+                    HStack {
+                        Button(updater.installedWithBrew ? "Update" : "Download") { updater.update() }
+                            .buttonStyle(.borderedProminent)
+                        Button("What's new") { updater.openReleasePage() }
+                            .buttonStyle(.link)
+                    }
+                case .updating:
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("Updating… Homebrew builds it from source, about a minute. The app restarts when done.")
+                            .font(.caption)
+                    }
+                case let .failed(message):
+                    Text("Update failed: \(message)").font(.caption).foregroundStyle(.red).lineLimit(3)
+                    HStack {
+                        Button("Try Again") { updater.update() }
+                        Button("Open Release Page") { updater.openReleasePage() }.buttonStyle(.link)
+                    }
+                }
             }
             .padding(4)
             .frame(maxWidth: .infinity, alignment: .leading)

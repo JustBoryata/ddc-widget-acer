@@ -20,6 +20,16 @@ Homebrew builds the app from source on your Mac, so no developer signature is ne
 
 **Requirements:** an Apple Silicon Mac, macOS 13 or later, and an Acer monitor with **DDC/CI** turned on in its menu.
 
+## Updating
+
+From 0.2.0, the app checks GitHub for a new release once a day. When one is out, the menu-bar icon gets a download arrow and the menu shows **Update**, which runs `brew upgrade` and restarts the app. You can also check by hand with **Check for Updates** at the bottom of the menu.
+
+On 0.1.0, or from the terminal:
+
+```sh
+brew upgrade JustBoryata/tap/ddc-widget-acer
+```
+
 ## One-time monitor setup (for the HDR / Local Dimming toggles)
 
 Local dimming can't be set over DDC on the XV275U P3. The app switches it with picture modes instead (HDR mode turns it on, User mode turns it off). For that to work, set the monitor up once with its own buttons:

@@ -72,22 +72,44 @@ final class MonitorModel: ObservableObject {
     /// Reads every value from the monitor. Called when the menu opens, never on a timer, so it
     /// doesn't compete with BetterDisplay for the DDC bus.
     func refresh(force: Bool = false) async {
-        guard let controller, !isRefreshing else { return }
+        guard let controller else { return }
+        guard !isRefreshing else {
+            // A change landed mid-refresh; read everything again once this pass ends.
+            if force { refreshAgain = true }
+            return
+        }
         guard force || Date().timeIntervalSince(lastRefresh) > 3 else { return }
         isRefreshing = true
         defer {
             isRefreshing = false
             lastRefresh = Date()
         }
-        for feature in features where !writing.contains(feature.id) {
-            do {
-                let value = try await controller.read(feature)
-                guard !writing.contains(feature.id) else { continue }
-                values[feature.id] = value.current
-                maxima[feature.id] = value.maximum
-            } catch {
-                lastError = "\(feature.name): \(error)"
+        repeat {
+            refreshAgain = false
+            for feature in features where !writing.contains(feature.id) {
+                do {
+                    let value = try await controller.read(feature)
+                    guard !writing.contains(feature.id) else { continue }
+                    values[feature.id] = value.current
+                    maxima[feature.id] = value.maximum
+                } catch {
+                    lastError = "\(feature.name): \(error)"
+                }
             }
+        } while refreshAgain
+    }
+
+    private var refreshAgain = false
+    private var refreshAfterChange: Task<Void, Never>?
+
+    /// Other values follow some changes (each display mode has its own brightness, contrast, color
+    /// temp…), so re-read everything shortly after one, instead of waiting for the refresh button.
+    private func scheduleRefreshAfterChange() {
+        refreshAfterChange?.cancel()
+        refreshAfterChange = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.refresh(force: true)
         }
     }
 
@@ -172,13 +194,22 @@ final class MonitorModel: ObservableObject {
         if enabled, modeBeforeHDR == nil { await rememberCurrentMode() }
         let target = enabled ? Self.hdrModeValue : (modeBeforeHDR ?? 0)
         EventLog.write("monitor mode -> \(target)")
+        let id = AcerFeatures.displayMode.id
+        // Keeps a refresh from showing the old mode while the write is in flight.
+        writing.insert(id)
+        defer { writing.remove(id) }
         do {
             try await controller.write(AcerFeatures.displayMode, target)
-            values[AcerFeatures.displayMode.id] = target
+            values[id] = target
             if !enabled { modeBeforeHDR = nil }
+            lastError = nil
         } catch {
-            lastError = "HDR mode: \(error)"
+            EventLog.write("monitor mode -> \(target) failed: \(error)")
+            lastError = "Display mode: \(error)"
+            // Show the mode the monitor is really in, so the toggles match it.
+            if let actual = try? await controller.read(AcerFeatures.displayMode) { values[id] = actual.current }
         }
+        scheduleRefreshAfterChange()
     }
 
     func set(_ feature: Feature, _ value: UInt16) {
@@ -200,5 +231,8 @@ final class MonitorModel: ObservableObject {
             }
         }
         writing.remove(feature.id)
+        // A slider only changes itself; a mode, preset or toggle can change other values.
+        if case .range = feature.kind { return }
+        scheduleRefreshAfterChange()
     }
 }

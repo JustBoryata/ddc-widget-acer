@@ -15,9 +15,11 @@ enum Snapshot {
     static func run(to directory: String) async {
         let model = MonitorModel()
         await model.connect()
+        let updater = Updater()
+        await updater.check(force: true)
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             // A real MenuBarExtra window draws its own material; offscreen we need a solid background.
-            let view = ContentView().environmentObject(model).background(Color(nsColor: .windowBackgroundColor))
+            let view = ContentView().environmentObject(model).environmentObject(updater).background(Color(nsColor: .windowBackgroundColor))
             let host = NSHostingView(rootView: view)
             host.appearance = NSAppearance(named: appearance)
             let size = host.fittingSize
